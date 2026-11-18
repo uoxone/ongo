@@ -6,7 +6,7 @@
 
 [package]
 name = "ongo"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "A small, fast Django-style web framework for the backend and the frontend. Routes, views, templates, static files, and one HTTP server."
 license = "MIT OR Apache-2.0"

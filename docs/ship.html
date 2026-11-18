@@ -21,6 +21,7 @@
     <a href="templates.html">Templates</a>
     <a href="static.html">Static</a>
     <a href="ship.html" aria-current="page">Ship</a>
+    <a href="pm2.html">PM2</a>
     <a href="test.html">Tests</a>
   </nav>
 </header>
@@ -36,7 +37,7 @@
 nava/build/static</code></pre>
   <p>Copy that folder to the server and run the program from inside it:</p>
   <pre><code>./nava</code></pre>
-  <p>Cargo and rustc stay behind. The binary links to the system libc, which Linux already has. Build it on a machine whose glibc is close to the server's.</p>
+  <p>Cargo and rustc stay behind. The binary links to the system libc, which Linux already has. Build it on a machine whose glibc is close to the server's. One process serves. To use more cores, run several copies with <a href="pm2.html">PM2</a>, OpenLiteSpeed, or another process manager; <code>SO_REUSEPORT</code> lets them share the port.</p>
 
   <h2>Let the world in</h2>
   <p>Before you upload, set <code>ADDR</code> in <code>src/settings.rs</code>:</p>
@@ -47,13 +48,13 @@ nava/build/static</code></pre>
   <p>HTML is inside the binary. <code>ongo build</code> copies <code>static/</code> next to the program, so pictures, video, and <code>style.css</code> are already in <code>build/static</code>. OnGo looks in the current directory first, then next to the program.</p>
 
   <h2>How it listens</h2>
-  <p>OnGo speaks HTTP itself: <code>epoll</code>, one thread per core, and <code>SO_REUSEPORT</code>. A small response walks a short path.</p>
+  <p>OnGo speaks HTTP itself: <code>epoll</code> and <code>SO_REUSEPORT</code>. A small response walks a short path.</p>
   <p>On one machine, a small release build did about 400,000 requests a second with 8 keep-alive connections, and about 975,000 when the requests were sent in a batch.</p>
   <div class="note">
     <p>Views share the thread that holds the connection. A slow view holds that thread. Keep the work small, and the server stays quick.</p>
   </div>
 
-  <p class="next"><a href="test.html">Tests →</a></p>
+  <p class="next"><a href="pm2.html">PM2 →</a></p>
 </main>
 <footer>
   <p>A small framework, written to stay small.</p>

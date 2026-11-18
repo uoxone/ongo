@@ -1,16 +1,15 @@
 //! HTTP server.
 //!
-//! One thread per core. Each thread has its own
-//! listen socket (SO_REUSEPORT) and its own epoll
-//! loop, so cores do not share a connection lock.
+//! One process, one epoll loop — like Django's
+//! `runserver`. Scale with PM2, OpenLiteSpeed, or
+//! another process manager. `SO_REUSEPORT` lets
+//! several processes share the same address.
 
 #![forbid(unsafe_code)]
 
 use std::io::{self, ErrorKind, Seek, SeekFrom};
 use std::net::{SocketAddr, SocketAddrV4, ToSocketAddrs};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::mpsc;
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -23,9 +22,8 @@ const MAX_CONN: usize = 8192;
 
 // -----------------------------------------------
 // run
-// Resolves the address, starts one worker per core,
-// and waits there. A view runs on the worker that
-// accepted the connection, so keep views short.
+// Resolves the address, binds once, and serves
+// on this thread until the process stops.
 // -----------------------------------------------
 
 /// Listen on `addr` and serve `router` until the process stops.
@@ -34,86 +32,21 @@ const MAX_CONN: usize = 8192;
 /// `localhost:8000` is accepted when it resolves to IPv4.
 pub fn run(addr: &str, router: Router) -> io::Result<()> {
     let addr = resolve(addr)?;
-    let workers = thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(1);
-    let router = Arc::new(router);
-    let (ready_tx, ready_rx) = mpsc::channel();
-    let (alive_tx, alive_rx) = mpsc::channel::<()>();
-
-    for id in 0..workers {
-        let ready_tx = ready_tx.clone();
-        let alive_tx = alive_tx.clone();
-        let router = Arc::clone(&router);
-        thread::Builder::new()
-            .name(format!("ongo-{id}"))
-            .spawn(move || {
-                let _stay = alive_tx;
-                worker(addr, &router, ready_tx);
-            })?;
-    }
-    drop(ready_tx);
-    drop(alive_tx);
-
-    let mut up = 0;
-    let mut failure = None;
-    for _ in 0..workers {
-        match ready_rx.recv() {
-            Ok(Ok(())) => up += 1,
-            Ok(Err(err)) => failure = Some(err),
-            Err(_) => break,
-        }
-    }
-    if up == 0 {
-        return Err(failure.unwrap_or_else(|| io::Error::other("could not bind")));
-    }
-
-    println!("ongo  http://{addr}  ({up} workers)");
-    let _ = alive_rx.recv();
-    Ok(())
-}
-
-/// The first IPv4 address. An IPv6-only name is an error.
-fn resolve(addr: &str) -> io::Result<SocketAddrV4> {
-    let mut saw_v6 = false;
-    for found in addr.to_socket_addrs()? {
-        match found {
-            SocketAddr::V4(v4) => return Ok(v4),
-            SocketAddr::V6(_) => saw_v6 = true,
-        }
-    }
-    let message = if saw_v6 {
-        "ongo listens on IPv4; use an address such as 127.0.0.1:8000"
-    } else {
-        "could not resolve the listen address"
-    };
-    Err(io::Error::new(ErrorKind::InvalidInput, message))
-}
-
-/// One core. It owns a listen socket and an epoll loop.
-fn worker(addr: SocketAddrV4, router: &Router, ready: mpsc::Sender<io::Result<()>>) {
-    let listen = match sys::listen_socket(addr) {
-        Ok(fd) => fd,
-        Err(err) => {
-            let _ = ready.send(Err(err));
-            return;
-        }
-    };
+    let listen = sys::listen_socket(addr)?;
     let ep = match sys::epoll_create() {
         Ok(fd) => fd,
         Err(err) => {
             let _ = sys::close_fd(listen);
-            let _ = ready.send(Err(err));
-            return;
+            return Err(err);
         }
     };
     if let Err(err) = sys::epoll_add(ep, listen, sys::LISTEN) {
         let _ = sys::close_fd(ep);
         let _ = sys::close_fd(listen);
-        let _ = ready.send(Err(err));
-        return;
+        return Err(err);
     }
-    let _ = ready.send(Ok(()));
+
+    println!("ongo  http://{addr}");
 
     let mut table = Table::default();
     let mut events = vec![EpollEvent { events: 0, data: 0 }; 1024];
@@ -135,13 +68,31 @@ fn worker(addr: SocketAddrV4, router: &Router, ready: mpsc::Sender<io::Result<()
             }
             let id = data as usize;
             let gone = flags & sys::PEER_GONE != 0 && flags & sys::EPOLLIN == 0;
-            if gone || !drive(&mut table, id, router) {
+            if gone || !drive(&mut table, id, &router) {
                 drop_conn(&mut table, ep, id);
             }
         }
     }
     let _ = sys::close_fd(ep);
     let _ = sys::close_fd(listen);
+    Ok(())
+}
+
+/// The first IPv4 address. An IPv6-only name is an error.
+fn resolve(addr: &str) -> io::Result<SocketAddrV4> {
+    let mut saw_v6 = false;
+    for found in addr.to_socket_addrs()? {
+        match found {
+            SocketAddr::V4(v4) => return Ok(v4),
+            SocketAddr::V6(_) => saw_v6 = true,
+        }
+    }
+    let message = if saw_v6 {
+        "ongo listens on IPv4; use an address such as 127.0.0.1:8000"
+    } else {
+        "could not resolve the listen address"
+    };
+    Err(io::Error::new(ErrorKind::InvalidInput, message))
 }
 
 /// Accept until the kernel says the queue is empty.

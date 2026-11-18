@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f6f1e8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161310" media="(prefers-color-scheme: dark)">
+<title>PM2 · OnGo</title>
+<meta name="description" content="Run an OnGo binary under PM2. One process by default; start several copies on the same port with SO_REUSEPORT.">
+<link rel="canonical" href="https://uoxone.github.io/ongo/pm2.html">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<div class="frame">
+<header class="top">
+  <a class="brand" href="index.html">OnGo</a>
+  <nav>
+    <a href="start.html">Start</a>
+    <a href="routes.html">Routes</a>
+    <a href="views.html">Views</a>
+    <a href="templates.html">Templates</a>
+    <a href="static.html">Static</a>
+    <a href="ship.html">Ship</a>
+    <a href="pm2.html" aria-current="page">PM2</a>
+    <a href="test.html">Tests</a>
+  </nav>
+</header>
+<main id="content">
+  <p class="kicker">PM2</p>
+  <h1>More cores, same binary</h1>
+  <p class="lede">OnGo serves in one process, like Django's runserver. PM2 starts that file again for each core you want to use.</p>
+
+  <h2>Build first</h2>
+  <p>On your machine:</p>
+  <pre><code>ongo build nava</code></pre>
+  <p>Upload the whole <code>build/</code> folder. It must contain the binary and <code>static/</code> next to it:</p>
+  <pre><code>nava/build/nava
+nava/build/static</code></pre>
+  <p>In <code>src/settings.rs</code>, listen on every interface before you build again:</p>
+  <pre><code>pub const ADDR: &amp;str = "0.0.0.0:8000";</code></pre>
+
+  <h2>Install PM2</h2>
+  <pre><code>npm install -g pm2</code></pre>
+  <p>Node is only for the process manager. The OnGo app stays a plain Linux binary.</p>
+
+  <h2>One process</h2>
+  <p>On the server, stand in the folder that holds the binary:</p>
+  <pre><code>cd /var/www/nava
+pm2 start ./nava --name nava</code></pre>
+  <p>That is enough for a quiet site. Check it:</p>
+  <pre><code>pm2 status
+pm2 logs nava</code></pre>
+
+  <h2>Several processes</h2>
+  <p>OnGo sets <code>SO_REUSEPORT</code>, so several copies can bind <code>0.0.0.0:8000</code> together. Pick a count close to your CPU cores — for eight cores, four or eight is fine:</p>
+  <pre><code>pm2 start ./nava --name nava -i 4</code></pre>
+  <p>Or match the machine:</p>
+  <pre><code>pm2 start ./nava --name nava -i max</code></pre>
+  <p>Each instance is its own process. The kernel shares new connections across them.</p>
+
+  <h2>A small config file</h2>
+  <p>Put <code>ecosystem.config.cjs</code> next to the binary:</p>
+  <pre><code>module.exports = {
+  apps: [
+    {
+      name: "nava",
+      script: "./nava",
+      cwd: "/var/www/nava",
+      instances: 4,
+      exec_mode: "fork",
+    },
+  ],
+};</code></pre>
+  <p>Then:</p>
+  <pre><code>pm2 start ecosystem.config.cjs
+pm2 save
+pm2 startup</code></pre>
+  <p><code>exec_mode: "fork"</code> is required for a native binary. Do not use Node's cluster mode here. <code>pm2 save</code> and <code>pm2 startup</code> bring the app back after a reboot.</p>
+
+  <h2>Day to day</h2>
+  <table>
+    <tr><th>Command</th><th>What it does</th></tr>
+    <tr><td><code>pm2 status</code></td><td>Lists the processes</td></tr>
+    <tr><td><code>pm2 logs nava</code></td><td>Follows stdout and stderr</td></tr>
+    <tr><td><code>pm2 restart nava</code></td><td>Restarts every instance</td></tr>
+    <tr><td><code>pm2 stop nava</code></td><td>Stops without deleting</td></tr>
+    <tr><td><code>pm2 delete nava</code></td><td>Removes the app from PM2</td></tr>
+    <tr><td><code>pm2 scale nava 8</code></td><td>Changes the instance count</td></tr>
+  </table>
+
+  <h2>After you rebuild</h2>
+  <p>Copy the new <code>build/</code> onto the server, then:</p>
+  <pre><code>pm2 restart nava</code></pre>
+  <p>Keep running PM2 from the folder that contains both <code>./nava</code> and <code>static/</code>. OnGo looks for static files in the current directory first.</p>
+
+  <div class="note">
+    <p>OpenLiteSpeed, systemd, or another supervisor works the same way: start several copies of the binary on the same address. PM2 is one convenient choice, not a requirement.</p>
+  </div>
+
+  <p class="next"><a href="test.html">Tests →</a></p>
+</main>
+<footer>
+  <p>A small framework, written to stay small.</p>
+  <p>Whenever you have a question, ask in the <a href="https://t.me/ongo_framework">official group</a>.</p>
+  <p><a href="index.html">Docs</a> · <a href="https://github.com/uoxone/jango">Source</a></p>
+</footer>
+</div>
+</body>
+</html>
